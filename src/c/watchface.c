@@ -13,26 +13,42 @@
 // TODO Use `layer_get_frame` instead of hardcoding sizes in callbacks!
 // TODO Add `const` where appropriate!
 
+#define max(a,b) \
+    ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+       _a > _b ? _a : _b; })
+#define min(a,b) \
+    ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+       _a < _b ? _a : _b; })
+
 // --------------------------------------------------------------------------
 // Types and global variables.
 // --------------------------------------------------------------------------
 
 static Window* g_window;
-static Layer* g_layer;                     // Main layer updated every minute - clock and health data.
-static Layer* g_battery_layer;             // Layer updated on battery events.
-static Layer* g_connection_layer;          // Layer updated on connection events.
-static Layer* g_weather_temp_layer;        // Layer updated on weather events from PebbleKit messages.
-static Layer* g_weather_icon_layer;        // Layer updated on weather events from PebbleKit messages.
-static Layer* g_weather_precipprob_layer;  // Layer updated on weather events from PebbleKit messages.
-static Layer* g_weather_precipgraph_layer; // Layer updated on weather events from PebbleKit messages.
+static Layer* g_layer;                        // Main layer updated every minute - clock and health data.
+static Layer* g_battery_layer;                // Layer updated on battery events.
+static Layer* g_connection_layer;             // Layer updated on connection events.
+static TextLayer* g_health_cals_text_layer;   // Layer updated on health events.
+static TextLayer* g_health_meters_text_layer; // Layer updated on health events.
+static TextLayer* g_health_sleep_text_layer;  // Layer updated on health events.
+static TextLayer* g_health_bpm_text_layer;    // Layer updated on heart beat events.
+static Layer* g_health_bpm_graph_layer;       // Layer updated on heart beat events or on minute ticks.
+static Layer* g_weather_temp_layer;           // Layer updated on weather events from PebbleKit messages.
+static Layer* g_weather_icon_layer;           // Layer updated on weather events from PebbleKit messages.
+static Layer* g_weather_precipprob_layer;     // Layer updated on weather events from PebbleKit messages.
+static Layer* g_weather_precipgraph_layer;    // Layer updated on weather events from PebbleKit messages or on minute ticks.
 static struct tm g_local_time;
 static uint8_t g_battery_level;
+static int8_t g_connected; // TODO Should be bool!
 static int8_t g_temp;
 static int8_t g_tempmax;
 static int8_t g_tempmin;
 static uint8_t g_precipprob;
 static uint8_t g_weather_icon; // TODO Use less obfuscated data type!
 static uint8_t g_weather_precip_array[60];
+static uint8_t g_ticks_since_weather_array_update;
 static AppSync g_sync;
 static uint8_t g_sync_buffer[MESSAGE_BUF];
 
@@ -108,18 +124,23 @@ static void on_layer_update(Layer* layer, GContext* ctx) {
     
     // Draw the minute hand.
     fctx_begin_fill(&fctx);
-    fctx_set_offset(&fctx, center);
+    fctx_set_offset(&fctx, FPoint(0,0));
+    fctx_set_scale(&fctx, FPoint(f_h, f_h), FPoint(f_h, f_h));
+    fctx_set_rotation(&fctx, 0);
     FPoint minute_p = clockToCartesian(center, f_w/3, f_h/3, minute_angle);
-    fctx_plot_circle(&fctx, &minute_p, INT_TO_FIXED(7));
-    fctx_set_fill_color(&fctx, GColorBlack);
-    fctx_plot_circle(&fctx, &minute_p, INT_TO_FIXED(5));
-    fctx_set_fill_color(&fctx, GColorWhite);
-    fctx_plot_circle(&fctx, &minute_p, INT_TO_FIXED(1));  
+    FPoint minute_p1 = clockToCartesian(center, f_w*8/30, f_h*8/30, minute_angle+TRIG_MAX_ANGLE/60);
+    FPoint minute_p2 = clockToCartesian(center, f_w*8/30, f_h*8/30, minute_angle-TRIG_MAX_ANGLE/60);
+    fctx_set_fill_color(&fctx, GColorDarkGray);
+    fctx_move_to(&fctx, minute_p);
+    fctx_line_to(&fctx, minute_p1);
+    fctx_line_to(&fctx, minute_p2);
+    fctx_close_path(&fctx);    
     fctx_end_fill(&fctx);
 
     // Draw the hour hand.
     fctx_set_scale(&fctx, FPoint(f_h, f_h), FPoint(f_w*13/50, f_h*13/50));
     fctx_begin_fill(&fctx);
+    fctx_set_offset(&fctx, center);
     fctx_set_fill_color(&fctx, GColorBlack);
     fctx_set_rotation(&fctx, hour_angle);
     fctx_move_to(&fctx, FPointI(  0, -15));
@@ -154,24 +175,6 @@ static void on_layer_update(Layer* layer, GContext* ctx) {
     graphics_draw_text(ctx, date_string,
                        fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
                        GRect(w/3,h*2/3,w/3,15), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
-
-  
-    // Draw health corner - lower left.
-    char bpm_string[8];
-    snprintf(bpm_string, sizeof bpm_string, "\U00002764%d", (int)health_service_peek_current_value(HealthMetricHeartRateBPM));
-    graphics_draw_text(ctx, bpm_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(1,h*21/30,w/3,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
-    char Cal_string[8];
-    snprintf(Cal_string, sizeof Cal_string, "%dCal", (int)(health_service_sum_today(HealthMetricRestingKCalories)+health_service_sum_today(HealthMetricActiveKCalories))); 
-    graphics_draw_text(ctx, Cal_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(1,h*21/30+14,w/3,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
-    char meter_string[7];
-    snprintf(meter_string, sizeof meter_string, "%dm", (int)health_service_sum_today(HealthMetricWalkedDistanceMeters)); 
-    graphics_draw_text(ctx, meter_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(1,h*21/30+14+14,w/3,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);    
 }
 
 static void on_battery_layer_update(Layer* layer, GContext* ctx) {
@@ -190,6 +193,31 @@ static void on_battery_layer_update(Layer* layer, GContext* ctx) {
 }
 
 static void on_connection_layer_update(Layer* layer, GContext* ctx) {
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+    if (g_connected != 0) {
+        graphics_draw_line(ctx, GPoint(3, 0), GPoint(3, 12));
+        graphics_draw_line(ctx, GPoint(3, 0), GPoint(6, 3));
+        graphics_draw_line(ctx, GPoint(3, 12), GPoint(6, 9));
+    }
+    graphics_draw_line(ctx, GPoint(0, 3), GPoint(6, 9));
+    graphics_draw_line(ctx, GPoint(0, 9), GPoint(6, 3));
+}
+
+static void on_health_bpm_graph_layer_update(Layer* layer, GContext* ctx) {
+    HealthMinuteData minute_data[30];
+    time_t t1, t2;
+    // TODO Why not health_service_get_minute_history(minute_data, sizeof(minute_data), &t1, &t2));
+    health_service_get_minute_history(&minute_data[0], 30, &t1, &t2);
+    graphics_context_set_fill_color(ctx, GColorDarkGray);
+    graphics_fill_rect(ctx, GRect(1, 11, 33, 1), 0, GCornerNone);
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+    for (int i=0; i<30; i++) {
+        if (minute_data[29-i].is_invalid) {continue;}
+        int y = min(20, max(1, 20-(minute_data[29-i].heart_rate_bpm-50)*20/100));
+        graphics_draw_line(ctx, GPoint(i+2, y), GPoint(i+2, 20));
+    }
+    graphics_draw_rect(ctx, GRect(0,0,34,22));
+    graphics_fill_rect(ctx, GRect(16, 1, 1, 20), 0, GCornerNone);
 }
 
 static void on_weather_temp_layer_update(Layer* layer, GContext* ctx) {
@@ -254,10 +282,16 @@ static void on_weather_precipprob_layer_update(Layer* layer, GContext* ctx) {
 static void on_weather_precipgraph_layer_update(Layer* layer, GContext* ctx) {
     graphics_context_set_stroke_color(ctx, GColorWhite);
     int count = 0;
-    for (int i=0; i<45; i++) {
-        if (g_weather_precip_array[i] > 0) {
-            count += 1;
-            graphics_draw_line(ctx, GPoint(i+2, 25-g_weather_precip_array[i]/10), GPoint(i+2, 25));
+    int i;
+    for (i=0; i<45; i++) {
+        int i_off = g_ticks_since_weather_array_update+i;      
+        if (i_off < 60) {
+            if (g_weather_precip_array[i_off] > 0) {
+                count += 1;
+                graphics_draw_line(ctx, GPoint(i+2, 25-g_weather_precip_array[i_off]/10), GPoint(i+2, 25));
+            }
+        } else {
+            break;
         }
     }
     if (count > 0) {
@@ -265,6 +299,9 @@ static void on_weather_precipgraph_layer_update(Layer* layer, GContext* ctx) {
         graphics_context_set_fill_color(ctx, GColorDarkGray);
         graphics_fill_rect(ctx, GRect(17, 1, 1, 25), 0, GCornerNone);
         graphics_fill_rect(ctx, GRect(32, 1, 1, 25), 0, GCornerNone);
+        if (g_ticks_since_weather_array_update>15) {
+            graphics_fill_rect(ctx, GRect(i+1, 23, 46-i, 2), 0, GCornerNone);
+        }
     }
 }
 
@@ -274,12 +311,45 @@ static void on_weather_precipgraph_layer_update(Layer* layer, GContext* ctx) {
 
 static void on_tick_timer(struct tm* tick_time, TimeUnits units_changed) {
     g_local_time = *tick_time;
+    g_ticks_since_weather_array_update += 1;
     layer_mark_dirty(g_layer);
+    layer_mark_dirty(g_health_bpm_graph_layer);
+    layer_mark_dirty(g_weather_precipgraph_layer);
 }
 
 static void on_battery_state(BatteryChargeState state) {
     g_battery_level = state.charge_percent;
     layer_mark_dirty(g_battery_layer);
+}
+
+static void on_connection(bool connected) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "g con was: %d", g_connected);
+    g_connected = connected ? 1 : 0;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "g con is: %d", g_connected);
+    layer_mark_dirty(g_connection_layer);
+}
+
+static void on_health(const HealthEventType event, void* context) {
+    static char Cal_string[13];
+    static char meter_string[7];
+    static char sleep_string[13];
+    static char bpm_string[8];
+    switch (event) {
+        case HealthEventHeartRateUpdate:
+            snprintf(bpm_string, sizeof bpm_string, "\U00002764%d", (int)health_service_peek_current_value(HealthMetricHeartRateBPM));
+            text_layer_set_text(g_health_bpm_text_layer, bpm_string);
+            break;
+        default:
+            snprintf(Cal_string, sizeof Cal_string, "%dCal(%d)", (int)(health_service_sum_today(HealthMetricRestingKCalories)+health_service_sum_today(HealthMetricActiveKCalories)), (int)health_service_sum_today(HealthMetricActiveKCalories)); 
+            text_layer_set_text(g_health_cals_text_layer, Cal_string);
+            snprintf(meter_string, sizeof meter_string, "%dm", (int)health_service_sum_today(HealthMetricWalkedDistanceMeters)); 
+            text_layer_set_text(g_health_meters_text_layer, meter_string);
+            int sleep = health_service_sum_today(HealthMetricSleepSeconds);
+            int restful = health_service_sum_today(HealthMetricSleepRestfulSeconds);
+            snprintf(sleep_string, sizeof sleep_string, "%d%%/%d.%dh", restful*100/sleep, sleep/3600, (sleep%3600)*10/3600); 
+            text_layer_set_text(g_health_sleep_text_layer, sleep_string);
+            break;
+    }
 }
 
 static void on_sync_error(DictionaryResult dict_error, AppMessageResult app_message_error, void *context) {
@@ -310,6 +380,7 @@ static void on_sync_tuple_change(const uint32_t key, const Tuple* new_tuple, con
             break;
         case WEATHER_PRECIP_ARRAY_KEY:
             for (int i=0; i<new_tuple->length; i++) {g_weather_precip_array[i] = new_tuple->value->data[i];}
+            g_ticks_since_weather_array_update = 0;
             layer_mark_dirty(g_weather_precipgraph_layer);
             break;
         default:
@@ -338,9 +409,37 @@ static void init() {
     layer_set_update_proc(g_battery_layer, &on_battery_layer_update);
     layer_add_child(window_layer, g_battery_layer);
 
-    g_connection_layer = layer_create(GRect(1, bounds.size.h/2-BAT_H/2-4, BAT_W, BAT_H+2));
+    g_connection_layer = layer_create(GRect(BAT_W/2-3, bounds.size.h/2+BAT_H/2+2, 7, 13));
     layer_set_update_proc(g_connection_layer, &on_connection_layer_update);
     layer_add_child(window_layer, g_connection_layer);
+
+    g_health_bpm_graph_layer = layer_create(GRect(1, 1, 34, 22));
+    layer_set_update_proc(g_health_bpm_graph_layer, &on_health_bpm_graph_layer_update);
+    layer_add_child(window_layer, g_health_bpm_graph_layer);
+
+    g_health_bpm_text_layer = text_layer_create(GRect(1, 28, bounds.size.w/4, 14));
+    layer_add_child(window_layer, text_layer_get_layer(g_health_bpm_text_layer));
+    text_layer_set_background_color(g_health_bpm_text_layer, GColorBlack);
+    text_layer_set_text_color(g_health_bpm_text_layer, GColorWhite);
+    text_layer_set_font(g_health_bpm_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    
+    g_health_meters_text_layer = text_layer_create(GRect(1, bounds.size.h-43, bounds.size.w/4, 14));
+    layer_add_child(window_layer, text_layer_get_layer(g_health_meters_text_layer));
+    text_layer_set_background_color(g_health_meters_text_layer, GColorBlack);
+    text_layer_set_text_color(g_health_meters_text_layer, GColorWhite);
+    text_layer_set_font(g_health_meters_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    
+    g_health_sleep_text_layer = text_layer_create(GRect(1, bounds.size.h-29, bounds.size.w*2/5-3, 14));
+    layer_add_child(window_layer, text_layer_get_layer(g_health_sleep_text_layer));
+    text_layer_set_background_color(g_health_sleep_text_layer, GColorBlack);
+    text_layer_set_text_color(g_health_sleep_text_layer, GColorWhite);
+    text_layer_set_font(g_health_sleep_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+
+    g_health_cals_text_layer = text_layer_create(GRect(1, bounds.size.h-15, bounds.size.w/2, 14));
+    layer_add_child(window_layer, text_layer_get_layer(g_health_cals_text_layer));
+    text_layer_set_background_color(g_health_cals_text_layer, GColorBlack);
+    text_layer_set_text_color(g_health_cals_text_layer, GColorWhite);
+    text_layer_set_font(g_health_cals_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
 
     g_weather_temp_layer = layer_create(GRect(bounds.size.w-32, bounds.size.h/2, 32, 30));
     layer_set_update_proc(g_weather_temp_layer, &on_weather_temp_layer_update);
@@ -361,7 +460,12 @@ static void init() {
     time_t now = time(NULL);
     g_local_time = *localtime(&now);
     tick_timer_service_subscribe(SECOND_UNIT, &on_tick_timer);
+  
     battery_state_service_subscribe(&on_battery_state);
+  
+    health_service_events_subscribe(&on_health, NULL);
+
+    connection_service_subscribe((ConnectionHandlers) {.pebble_app_connection_handler = on_connection});
   
     Tuplet initial_values[] = {
         TupletInteger(WEATHER_ICON_KEY, (uint8_t) 0),
@@ -381,6 +485,7 @@ static void init() {
 static void deinit() {
     battery_state_service_unsubscribe();
     tick_timer_service_unsubscribe();
+    connection_service_unsubscribe();
     window_destroy(g_window);
     layer_destroy(g_layer);
     layer_destroy(g_battery_layer);

@@ -31,8 +31,8 @@ function sendWeather() {
                       2:Math.round(req.response.daily.data[0].apparentTemperatureMax),     // Celsius
                       3:Math.round(req.response.daily.data[0].apparentTemperatureMin),     // Celsius
                       4:Math.round(req.response.daily.data[0].precipProbability*100),      // Percents
+                      // cm/h scaled to a byte, >7.6 mm/h is the definition of heavy rain
                       5:abominationThatShouldNotBeNecessary(req.response.minutely.data).map(function (el){return Math.min(Math.round(el.precipIntensity/10*255), 255);}).slice(0,60)
-                        // cm/h scaled to a byte, >7.6 mm/h is the definition of heavy rain
                      };
           console.log(json[5]);
           Pebble.sendAppMessage(json);
@@ -44,4 +44,4 @@ function sendWeather() {
     });
 }
 
-Pebble.addEventListener("ready", function() {setTimeout(sendWeather, 2000);});
+Pebble.addEventListener("ready", function() {sendWeather(); setInterval(sendWeather, 15*60*1000);});

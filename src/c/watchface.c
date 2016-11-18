@@ -39,6 +39,7 @@ static Layer* g_weather_temp_layer;           // Layer updated on weather events
 static Layer* g_weather_icon_layer;           // Layer updated on weather events from PebbleKit messages.
 static Layer* g_weather_precipprob_layer;     // Layer updated on weather events from PebbleKit messages.
 static Layer* g_weather_precipgraph_layer;    // Layer updated on weather events from PebbleKit messages or on minute ticks.
+static TextLayer* g_my_message_layer;         // A reminder about 2016.
 static struct tm g_local_time;
 static uint8_t g_battery_level;
 static int8_t g_connected; // TODO Should be bool!
@@ -204,16 +205,16 @@ static void on_connection_layer_update(Layer* layer, GContext* ctx) {
 }
 
 static void on_health_bpm_graph_layer_update(Layer* layer, GContext* ctx) {
-    HealthMinuteData minute_data[30];
+    HealthMinuteData minute_data[60];
     time_t t2 = time(NULL);
-    time_t t1 = t2 - SECONDS_PER_HOUR/2;
+    time_t t1 = t2 - SECONDS_PER_HOUR;
     // TODO Why not health_service_get_minute_history(minute_data, sizeof(minute_data), &t1, &t2));
-    health_service_get_minute_history(&minute_data[0], 30, &t1, &t2);
+    health_service_get_minute_history(&minute_data[0], 60, &t1, &t2);
     graphics_context_set_fill_color(ctx, GColorDarkGray);
     graphics_fill_rect(ctx, GRect(1, 11, 33, 1), 0, GCornerNone);
     graphics_context_set_stroke_color(ctx, GColorWhite);
     int last_y = 20;
-    for (int i=0; i<30; i++) {
+    for (int i=0; i<60; i++) {
         int y;
         if (minute_data[i].is_invalid || minute_data[i].heart_rate_bpm == 0) {
             y = last_y;
@@ -221,7 +222,9 @@ static void on_health_bpm_graph_layer_update(Layer* layer, GContext* ctx) {
             y = min(20, max(1, 20-(minute_data[i].heart_rate_bpm-50)*20/100));
             last_y = y;
         }
-        graphics_draw_line(ctx, GPoint(i+2, y), GPoint(i+2, 20));
+        if (i>=30) { // We are plotting the last 30 minutes, but reading the last 60 minutes is a cheap way ensure we are not starting with a bad datapoint.
+            graphics_draw_line(ctx, GPoint(i+2-30, y), GPoint(i+2-30, 20));
+        }
     }
     graphics_draw_rect(ctx, GRect(0,0,34,22));
     graphics_fill_rect(ctx, GRect(16, 1, 1, 20), 0, GCornerNone);
@@ -350,14 +353,19 @@ static void on_health(const HealthEventType event, void* context) {
         default:
             snprintf(Cal_string, sizeof Cal_string, "%dCal(%d)", (int)(health_service_sum_today(HealthMetricRestingKCalories)+health_service_sum_today(HealthMetricActiveKCalories)), (int)health_service_sum_today(HealthMetricActiveKCalories)); 
             text_layer_set_text(g_health_cals_text_layer, Cal_string);
-            snprintf(meter_string, sizeof meter_string, "%dm", (int)health_service_sum_today(HealthMetricWalkedDistanceMeters)); 
+            int walked_meters = health_service_sum_today(HealthMetricWalkedDistanceMeters);
+            snprintf(meter_string, sizeof meter_string, "%d.%dkm", walked_meters/1000, (walked_meters%1000)/100);
             text_layer_set_text(g_health_meters_text_layer, meter_string);
-            int sleep = health_service_sum_today(HealthMetricSleepSeconds);
-            int restful = health_service_sum_today(HealthMetricSleepRestfulSeconds);
-            snprintf(sleep_string, sizeof sleep_string, "%d%%/%d.%dh", restful*100/sleep, sleep/3600, (sleep%3600)*10/3600); 
+            int32_t sleep = health_service_sum_today(HealthMetricSleepSeconds);
+            int32_t restful = health_service_sum_today(HealthMetricSleepRestfulSeconds);
+            snprintf(sleep_string, sizeof sleep_string, "%d%%/%d.%dh", (int)(restful*100/sleep), (int)(sleep/3600), (int)((sleep%3600)*10/3600)); 
             text_layer_set_text(g_health_sleep_text_layer, sleep_string);
             break;
     }
+}
+
+static void on_tap(AccelAxisType axis, int32_t direction) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "tap: %d %d", axis, direction);
 }
 
 static void on_sync_error(DictionaryResult dict_error, AppMessageResult app_message_error, void *context) {
@@ -464,7 +472,15 @@ static void init() {
     g_weather_precipgraph_layer = layer_create(GRect(bounds.size.w/2+4, bounds.size.h-27, 49, 27));
     layer_set_update_proc(g_weather_precipgraph_layer, &on_weather_precipgraph_layer_update);
     layer_add_child(window_layer, g_weather_precipgraph_layer);
-    
+
+    g_my_message_layer = text_layer_create(GRect(37, 0, bounds.size.w-37, 14));
+    layer_add_child(window_layer, text_layer_get_layer(g_my_message_layer));
+    text_layer_set_background_color(g_my_message_layer, GColorBlack);
+    text_layer_set_text_color(g_my_message_layer, GColorWhite);
+    text_layer_set_font(g_my_message_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    text_layer_set_text_alignment(g_my_message_layer, GTextAlignmentRight);
+    text_layer_set_text(g_my_message_layer, "This is not normal!");
+  
     time_t now = time(NULL);
     g_local_time = *localtime(&now);
     tick_timer_service_subscribe(MINUTE_UNIT, &on_tick_timer);
@@ -477,6 +493,8 @@ static void init() {
 
     connection_service_subscribe((ConnectionHandlers) {.pebble_app_connection_handler = on_connection});
     on_connection(connection_service_peek_pebble_app_connection());
+  
+    accel_tap_service_subscribe(on_tap);  
   
     Tuplet initial_values[] = {
         TupletInteger(WEATHER_ICON_KEY, (uint8_t) 0),
@@ -497,16 +515,23 @@ static void deinit() {
     battery_state_service_unsubscribe();
     tick_timer_service_unsubscribe();
     connection_service_unsubscribe();
+    accel_tap_service_unsubscribe();
     window_destroy(g_window);
     layer_destroy(g_layer);
     layer_destroy(g_battery_layer);
     layer_destroy(g_connection_layer);
+    layer_destroy(g_health_bpm_graph_layer);
     layer_destroy(g_weather_temp_layer);
     layer_destroy(g_weather_icon_layer);
     layer_destroy(g_weather_precipprob_layer);
     layer_destroy(g_weather_precipgraph_layer);
+    text_layer_destroy(g_health_cals_text_layer);
+    text_layer_destroy(g_health_meters_text_layer);
+    text_layer_destroy(g_health_sleep_text_layer);
+    text_layer_destroy(g_health_bpm_text_layer);
+    text_layer_destroy(g_my_message_layer);
     app_sync_deinit(&g_sync);
-}
+  }
 
 // --------------------------------------------------------------------------
 // The main event loop.

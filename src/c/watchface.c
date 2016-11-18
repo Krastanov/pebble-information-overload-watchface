@@ -85,7 +85,7 @@ static void on_layer_update(Layer* layer, GContext* ctx) {
     FPoint center = FPointI(w / 2, h / 2);
     fixed_t f_w = INT_TO_FIXED(w);
     fixed_t f_h = INT_TO_FIXED(h);
-    int32_t minute_angle = g_local_time.tm_sec * TRIG_MAX_ANGLE / 60 + TRIG_MAX_ANGLE/2;
+    int32_t minute_angle = g_local_time.tm_min * TRIG_MAX_ANGLE / 60;
     int32_t hour_angle   = (g_local_time.tm_hour % 12) * TRIG_MAX_ANGLE / 12
                          +  g_local_time.tm_min        * TRIG_MAX_ANGLE / (12 * 60)
                          +  TRIG_MAX_ANGLE/2;
@@ -205,15 +205,22 @@ static void on_connection_layer_update(Layer* layer, GContext* ctx) {
 
 static void on_health_bpm_graph_layer_update(Layer* layer, GContext* ctx) {
     HealthMinuteData minute_data[30];
-    time_t t1, t2;
+    time_t t2 = time(NULL);
+    time_t t1 = t2 - SECONDS_PER_HOUR/2;
     // TODO Why not health_service_get_minute_history(minute_data, sizeof(minute_data), &t1, &t2));
     health_service_get_minute_history(&minute_data[0], 30, &t1, &t2);
     graphics_context_set_fill_color(ctx, GColorDarkGray);
     graphics_fill_rect(ctx, GRect(1, 11, 33, 1), 0, GCornerNone);
     graphics_context_set_stroke_color(ctx, GColorWhite);
+    int last_y = 20;
     for (int i=0; i<30; i++) {
-        if (minute_data[29-i].is_invalid) {continue;}
-        int y = min(20, max(1, 20-(minute_data[29-i].heart_rate_bpm-50)*20/100));
+        int y;
+        if (minute_data[i].is_invalid || minute_data[i].heart_rate_bpm == 0) {
+            y = last_y;
+        } else {
+            y = min(20, max(1, 20-(minute_data[i].heart_rate_bpm-50)*20/100));
+            last_y = y;
+        }
         graphics_draw_line(ctx, GPoint(i+2, y), GPoint(i+2, 20));
     }
     graphics_draw_rect(ctx, GRect(0,0,34,22));
@@ -322,6 +329,7 @@ static void on_battery_state(BatteryChargeState state) {
     layer_mark_dirty(g_battery_layer);
 }
 
+// TODO not working
 static void on_connection(bool connected) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "g con was: %d", g_connected);
     g_connected = connected ? 1 : 0;
@@ -405,11 +413,11 @@ static void init() {
     layer_add_child(window_layer, g_layer);
     GRect bounds = layer_get_unobstructed_bounds(g_layer);
 
-    g_battery_layer = layer_create(GRect(1, bounds.size.h/2-BAT_H/2-4, BAT_W, BAT_H+2));
+    g_battery_layer = layer_create(GRect(1, bounds.size.h/2-BAT_H/2-9, BAT_W, BAT_H+2));
     layer_set_update_proc(g_battery_layer, &on_battery_layer_update);
     layer_add_child(window_layer, g_battery_layer);
 
-    g_connection_layer = layer_create(GRect(BAT_W/2-3, bounds.size.h/2+BAT_H/2+2, 7, 13));
+    g_connection_layer = layer_create(GRect(BAT_W/2-3, bounds.size.h/2+BAT_H/2-3, 7, 13));
     layer_set_update_proc(g_connection_layer, &on_connection_layer_update);
     layer_add_child(window_layer, g_connection_layer);
 
@@ -459,13 +467,16 @@ static void init() {
     
     time_t now = time(NULL);
     g_local_time = *localtime(&now);
-    tick_timer_service_subscribe(SECOND_UNIT, &on_tick_timer);
+    tick_timer_service_subscribe(MINUTE_UNIT, &on_tick_timer);
   
     battery_state_service_subscribe(&on_battery_state);
+    on_battery_state(battery_state_service_peek());
   
     health_service_events_subscribe(&on_health, NULL);
+    on_health(HealthEventHeartRateUpdate, NULL);
 
     connection_service_subscribe((ConnectionHandlers) {.pebble_app_connection_handler = on_connection});
+    on_connection(connection_service_peek_pebble_app_connection());
   
     Tuplet initial_values[] = {
         TupletInteger(WEATHER_ICON_KEY, (uint8_t) 0),

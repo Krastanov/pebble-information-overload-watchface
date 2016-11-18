@@ -13,6 +13,7 @@ var iconNameToId = {
   'partly-cloudy-night': 10
 };
 
+// TODO fix abomination
 function abominationThatShouldNotBeNecessary(data) {
     var a = [];
     for (var i=0; i<60; i++) {
@@ -34,12 +35,10 @@ function sendWeather() {
                       // cm/h scaled to a byte, >7.6 mm/h is the definition of heavy rain
                       5:abominationThatShouldNotBeNecessary(req.response.minutely.data).map(function (el){return Math.min(Math.round(el.precipIntensity/10*255), 255);}).slice(0,60)
                      };
-          console.log(json[5]);
           Pebble.sendAppMessage(json);
         });
         req.responseType = 'json';
-        //req.open("GET", "https://api.darksky.net/forecast/"+key+"/"+pos.coords.latitude+","+pos.coords.longitude+"?units=si");
-        req.open("GET", "https://api.darksky.net/forecast/"+key+"/51.5063,-0.1271?units=si");
+        req.open("GET", "https://api.darksky.net/forecast/"+key+"/"+pos.coords.latitude+","+pos.coords.longitude+"?units=si");
         req.send();
     });
 }

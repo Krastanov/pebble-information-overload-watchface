@@ -1,23 +1,26 @@
 {
-    "author": "krastanov.stefan@gmail.com",
+    "author": "Stefan Krastanov",
     "dependencies": {
+        "pebble-clay": "^1.0.3",
         "pebble-fctx": "^1.6.0"
     },
     "keywords": [],
-    "name": "watchface",
+    "name": "infooverload",
     "pebble": {
         "capabilities": [
             "location",
+            "configurable",
             "health"
         ],
-        "displayName": "watchface",
+        "displayName": "InfoOverload",
         "enableMultiJS": true,
         "messageKeys": [
             "WEATHER_ICON_KEY",
             "WEATHER_TEMPERATURE_KEY",
             "WEATHER_TEMPERATUREMAX_KEY",
             "WEATHER_TEMPERATUREMIN_KEY",
-            "WEATHER_PRECIP_PROB_KEY"
+            "WEATHER_PRECIP_PROB_KEY",
+            "WEATHER_PRECIP_ARRAY_KEY"
         ],
         "projectType": "native",
         "resources": {

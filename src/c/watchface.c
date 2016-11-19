@@ -43,9 +43,9 @@ static TextLayer* g_my_message_layer;         // A reminder about 2016.
 static struct tm g_local_time;
 static uint8_t g_battery_level;
 static int8_t g_connected; // TODO Should be bool!
-static int8_t g_temp;
-static int8_t g_tempmax;
-static int8_t g_tempmin;
+static int8_t g_temp = 101; // TODO Use some more meaningful way to specify "unknown", not just setting it to 101!
+static int8_t g_tempmax = 101;
+static int8_t g_tempmin = 101;
 static uint8_t g_precipprob;
 static uint8_t g_weather_icon; // TODO Use less obfuscated data type!
 static uint8_t g_weather_precip_array[60];
@@ -170,6 +170,13 @@ static void on_layer_update(Layer* layer, GContext* ctx) {
 
     fctx_deinit_context(&fctx);
 
+    // Draw the time.
+    char time_string[6];
+    strftime(time_string, sizeof time_string, "%H:%M", &g_local_time);
+    graphics_draw_text(ctx, time_string,
+                       fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+                       GRect(w/3,h*2/3-18,w/3,18), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+
     // Draw the date.
     char date_string[7];
     strftime(date_string, sizeof date_string, "%b %d", &g_local_time);
@@ -232,47 +239,43 @@ static void on_health_bpm_graph_layer_update(Layer* layer, GContext* ctx) {
 
 static void on_weather_temp_layer_update(Layer* layer, GContext* ctx) {
     char temp_string[4];
-    snprintf(temp_string, sizeof temp_string, "%d", g_temp);
-    graphics_draw_text(ctx, temp_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(0,7,20,15), GTextOverflowModeWordWrap, GTextAlignmentRight, NULL);
-    snprintf(temp_string, sizeof temp_string, "%d", g_tempmax);
-    graphics_draw_text(ctx, temp_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(20-((g_tempmax<0)?5:0),0,20,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
-    snprintf(temp_string, sizeof temp_string, "%d", g_tempmin);
-    graphics_draw_text(ctx, temp_string,
-                       fonts_get_system_font(FONT_KEY_GOTHIC_14),
-                       GRect(20-((g_tempmin<0)?5:0),14,20,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+    if (g_temp < 101 && g_tempmax < 101 && g_tempmin < 101) {
+        snprintf(temp_string, sizeof temp_string, "%d", g_temp);
+        graphics_draw_text(ctx, temp_string,
+                           fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                           GRect(0,7,20,15), GTextOverflowModeWordWrap, GTextAlignmentRight, NULL);
+        snprintf(temp_string, sizeof temp_string, "%d", g_tempmax);
+        graphics_draw_text(ctx, temp_string,
+                           fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                           GRect(20-((g_tempmax<0)?5:0),0,20,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+        snprintf(temp_string, sizeof temp_string, "%d", g_tempmin);
+        graphics_draw_text(ctx, temp_string,
+                           fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                           GRect(20-((g_tempmin<0)?5:0),14,20,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+    }
 }
-
 static void on_weather_icon_layer_update(Layer* layer, GContext* ctx) {
     static GBitmap *s_bitmap;
     if (s_bitmap) {
       gbitmap_destroy(s_bitmap);
     }
-    uint32_t resource_id;
+    uint32_t resource_id = 0;
     if (g_weather_icon) {
         switch (g_weather_icon) { // TODO Mark in readme https://icons8.com/ as icons' source!
-            case  1: resource_id = RESOURCE_ID_Sun_25;
-            case  2: resource_id = RESOURCE_ID_Bright_Moon_25;
-            case  3: resource_id = RESOURCE_ID_Rain_25;
-            case  4: resource_id = RESOURCE_ID_Snow_25;
-            case  5: resource_id = RESOURCE_ID_Sleet_25;
-            case  6: resource_id = RESOURCE_ID_Air_Element_25;
-            case  7: resource_id = RESOURCE_ID_Dust_25;
-            case  8: resource_id = RESOURCE_ID_Clouds_25;
-            case  9: resource_id = RESOURCE_ID_Partly_Cloudy_Day_25;
-            case 10: resource_id = RESOURCE_ID_Partly_Cloudy_Night_25;
+            case  1: resource_id = RESOURCE_ID_Sun_25; break;
+            case  2: resource_id = RESOURCE_ID_Bright_Moon_25; break;
+            case  3: resource_id = RESOURCE_ID_Rain_25; break;
+            case  4: resource_id = RESOURCE_ID_Snow_25; break;
+            case  5: resource_id = RESOURCE_ID_Sleet_25; break;
+            case  6: resource_id = RESOURCE_ID_Air_Element_25; break;
+            case  7: resource_id = RESOURCE_ID_Dust_25; break;
+            case  8: resource_id = RESOURCE_ID_Clouds_25; break;
+            case  9: resource_id = RESOURCE_ID_Partly_Cloudy_Day_25; break;
+            case 10: resource_id = RESOURCE_ID_Partly_Cloudy_Night_25; break;
         }
         s_bitmap  = gbitmap_create_with_resource(resource_id);
         graphics_context_set_compositing_mode(ctx, GCompOpSet);
         graphics_draw_bitmap_in_rect(ctx, s_bitmap, GRect(0,0,25,25));
-    } else {
-        graphics_draw_text(ctx, "?",
-                           fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-                           GRect(0,0,25,25), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
-
     }
 }
 
@@ -433,7 +436,7 @@ static void init() {
     layer_set_update_proc(g_health_bpm_graph_layer, &on_health_bpm_graph_layer_update);
     layer_add_child(window_layer, g_health_bpm_graph_layer);
 
-    g_health_bpm_text_layer = text_layer_create(GRect(1, 28, bounds.size.w/4, 14));
+    g_health_bpm_text_layer = text_layer_create(GRect(1, 24, bounds.size.w/4, 14));
     layer_add_child(window_layer, text_layer_get_layer(g_health_bpm_text_layer));
     text_layer_set_background_color(g_health_bpm_text_layer, GColorBlack);
     text_layer_set_text_color(g_health_bpm_text_layer, GColorWhite);
@@ -449,6 +452,7 @@ static void init() {
     layer_add_child(window_layer, text_layer_get_layer(g_health_sleep_text_layer));
     text_layer_set_background_color(g_health_sleep_text_layer, GColorBlack);
     text_layer_set_text_color(g_health_sleep_text_layer, GColorWhite);
+    text_layer_set_overflow_mode(g_health_sleep_text_layer, GTextOverflowModeWordWrap);
     text_layer_set_font(g_health_sleep_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
 
     g_health_cals_text_layer = text_layer_create(GRect(1, bounds.size.h-15, bounds.size.w/2, 14));
@@ -497,11 +501,11 @@ static void init() {
     accel_tap_service_subscribe(on_tap);  
   
     Tuplet initial_values[] = {
-        TupletInteger(WEATHER_ICON_KEY, (uint8_t) 0),
-        TupletInteger(WEATHER_TEMPERATURE_KEY, (int8_t) -99),
-        TupletInteger(WEATHER_TEMPERATUREMAX_KEY, (int8_t)-99),
-        TupletInteger(WEATHER_TEMPERATUREMIN_KEY, (int8_t)-99),
-        TupletInteger(WEATHER_PRECIP_PROB_KEY, (uint8_t)100),
+        TupletInteger(WEATHER_ICON_KEY, (uint8_t)0),
+        TupletInteger(WEATHER_TEMPERATURE_KEY, (int8_t)101),
+        TupletInteger(WEATHER_TEMPERATUREMAX_KEY, (int8_t)101),
+        TupletInteger(WEATHER_TEMPERATUREMIN_KEY, (int8_t)101),
+        TupletInteger(WEATHER_PRECIP_PROB_KEY, (uint8_t)0),
         TupletBytes(WEATHER_PRECIP_ARRAY_KEY, g_weather_precip_array, sizeof(g_weather_precip_array))
     };
 
@@ -531,7 +535,7 @@ static void deinit() {
     text_layer_destroy(g_health_bpm_text_layer);
     text_layer_destroy(g_my_message_layer);
     app_sync_deinit(&g_sync);
-  }
+}
 
 // --------------------------------------------------------------------------
 // The main event loop.

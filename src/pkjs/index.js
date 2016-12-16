@@ -61,4 +61,4 @@ function sendWeather() {
     }
 }
 
-Pebble.addEventListener("ready", function() {sendWeather(); setInterval(sendWeather, 15*60*1000);});
+Pebble.addEventListener("ready", function() {sendWeather(); setInterval(sendWeather, 10*60*1000);});

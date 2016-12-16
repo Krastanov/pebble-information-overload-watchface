@@ -3,10 +3,6 @@
 #include <pebble-fctx/fpath.h>
 #include <pebble-fctx/ffont.h>
 
-// battery icon size:
-#define BAT_W 10
-#define BAT_H 15
-
 // message buffer size:
 #define MESSAGE_BUF 128
 
@@ -80,7 +76,7 @@ static inline FPoint clockToCartesian(FPoint center, fixed_t w, fixed_t h, int32
 // --------------------------------------------------------------------------
 
 static void on_layer_update(Layer* layer, GContext* ctx) {
-    GRect bounds = layer_get_unobstructed_bounds(layer);
+    GRect bounds = layer_get_bounds(layer);
     int16_t w = bounds.size.w;
     int16_t h = bounds.size.h;
     FPoint center = FPointI(w / 2, h / 2);
@@ -186,6 +182,9 @@ static void on_layer_update(Layer* layer, GContext* ctx) {
 }
 
 static void on_battery_layer_update(Layer* layer, GContext* ctx) {
+    GRect bounds = layer_get_bounds(layer);
+    int BAT_W = bounds.size.w;
+    int BAT_H = bounds.size.h-2;
     graphics_context_set_stroke_color(ctx, GColorWhite);
     graphics_draw_rect(ctx, GRect(0, 2, BAT_W, BAT_H));
     graphics_draw_rect(ctx, GRect(BAT_W/2-2, 0, 4, 2));
@@ -254,6 +253,7 @@ static void on_weather_temp_layer_update(Layer* layer, GContext* ctx) {
                            GRect(20-((g_tempmin<0)?5:0),14,20,15), GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
     }
 }
+
 static void on_weather_icon_layer_update(Layer* layer, GContext* ctx) {
     static GBitmap *s_bitmap;
     if (s_bitmap) {
@@ -335,11 +335,8 @@ static void on_battery_state(BatteryChargeState state) {
     layer_mark_dirty(g_battery_layer);
 }
 
-// TODO not working
 static void on_connection(bool connected) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "g con was: %d", g_connected);
-    g_connected = connected ? 1 : 0;
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "g con is: %d", g_connected);
+    g_connected = connected ? 1 : 0; // TODO weird data type conversion
     layer_mark_dirty(g_connection_layer);
 }
 
@@ -414,21 +411,21 @@ static void on_sync_tuple_change(const uint32_t key, const Tuple* new_tuple, con
 
 static void init() {
     g_window = window_create();
-    window_set_background_color(g_window, GColorBlack);
     window_stack_push(g_window, true);
+    window_set_background_color(g_window, GColorBlack);
     Layer* window_layer = window_get_root_layer(g_window);
     GRect window_frame = layer_get_frame(window_layer);
 
     g_layer = layer_create(window_frame);
     layer_set_update_proc(g_layer, &on_layer_update);
     layer_add_child(window_layer, g_layer);
-    GRect bounds = layer_get_unobstructed_bounds(g_layer);
+    GRect bounds = layer_get_bounds(g_layer);
 
-    g_battery_layer = layer_create(GRect(1, bounds.size.h/2-BAT_H/2-9, BAT_W, BAT_H+2));
+    g_battery_layer = layer_create(GRect(1, bounds.size.h/2-16, 10, 17));
     layer_set_update_proc(g_battery_layer, &on_battery_layer_update);
     layer_add_child(window_layer, g_battery_layer);
 
-    g_connection_layer = layer_create(GRect(BAT_W/2-3, bounds.size.h/2+BAT_H/2-3, 7, 13));
+    g_connection_layer = layer_create(GRect(2, bounds.size.h/2+4, 7, 13));
     layer_set_update_proc(g_connection_layer, &on_connection_layer_update);
     layer_add_child(window_layer, g_connection_layer);
 
@@ -516,11 +513,11 @@ static void init() {
 }
 
 static void deinit() {
-    battery_state_service_unsubscribe();
     tick_timer_service_unsubscribe();
+    battery_state_service_unsubscribe();
+    health_service_events_unsubscribe();
     connection_service_unsubscribe();
     accel_tap_service_unsubscribe();
-    window_destroy(g_window);
     layer_destroy(g_layer);
     layer_destroy(g_battery_layer);
     layer_destroy(g_connection_layer);
@@ -534,6 +531,7 @@ static void deinit() {
     text_layer_destroy(g_health_sleep_text_layer);
     text_layer_destroy(g_health_bpm_text_layer);
     text_layer_destroy(g_my_message_layer);
+    window_destroy(g_window);
     app_sync_deinit(&g_sync);
 }
 
